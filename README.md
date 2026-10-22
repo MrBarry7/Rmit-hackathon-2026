@@ -1,48 +1,152 @@
-# QuoGate (Zero-Blind-Trust Critical Access Vault)
+[![Built with TideCloak](https://tide.org/badges/built-with-tidecloak.svg)](https://tide.org/tidecloak?utm_source=github&utm_medium=readme&utm_campaign=unlocked)
 
-A multi-party governance vault preventing unilateral administrator abuse over sensitive enterprise data and permissions.
+## Project overview
 
-Built with **TideCloak**.
+**QuorumGate** is an admin console where no single administrator can decrypt customer data, grant
+themselves root, or add a new admin: every high-risk action needs **two independent admins**,
+enforced on the server and recorded in a tamper-evident audit log.
 
----
+Built with [TideCloak](https://tide.org/tidecloak?utm_source=github&utm_medium=readme&utm_campaign=unlocked).
 
-## 1. Vision & Originality
-In enterprise IT, administrators are routinely granted unilateral "God Mode"—the authority to access any data, export customer databases, or alter privileges without oversight. QuoGate re-architects privileged access by replacing absolute administrative trust with cryptographic multi-party authorization. Critical actions cannot be executed by any single actor, fundamentally eliminating insider threats and single-point-of-failure breaches.
+| Submission file | |
+|---|---|
+| [`sourcecodes.zip`](sourcecodes.zip) | Application source code (same as the [`quorumgate/`](quorumgate/) folder) |
+| [`summary.docx`](summary.docx) | Problem, solution, value, role of TideCloak, and what is mocked |
+| [`video.mp4`](video.mp4) | Two-minute working demonstration |
+| [Setup](#setup) | How to launch and test the prototype |
 
-## 2. Trust Constraint Insight
-* **The Constraint:** System administrators and cloud hosts possess custody of infrastructure but should not have unconstrained authority to modify access policies or decrypt sensitive payloads alone.
-* **The Vulnerability:** Traditional Role-Based Access Control (RBAC) relies on blind trust in admin credentials. A single compromised account or rogue insider can silently exfiltrate confidential records.
-* **The Rule:** No administrative elevation or decryption request can resolve without independent quorum consensus (e.g., Primary Admin + Security Auditor).
+### 1. Vision & originality
 
-## 3. Value & Impact
-* **Immunity-Sealed Confidentiality:** Critical records remain encrypted at rest and in transit. Server administrators cannot inspect plaintext customer records.
-* **Quorum-Enforced Integrity:** Policy and privilege changes require multi-signature approval at the cryptographic layer, making unilateral database tampering impossible.
-* **Auditability & Non-Repudiation:** Every access request generates an immutable transaction log tied to authorized approver signatures.
+In most organisations an IT administrator has "God Mode": one person can export the entire customer
+database, grant themselves root on production, or quietly create another admin account. QuorumGate
+replaces that single point of trust with a **two-person rule built into the application**:
 
-## 4. Why TideCloak Matters
-Traditional Identity & Access Management (IAM) tools like standard Keycloak, Okta, or AWS IAM enforce access rules via a central server where root administrators hold overriding power. TideCloak replaces centralized administrative trust with distributed authorization:
-* **Decentralized Authority:** Keys are sharded across independent nodes. No single administrator holds full access to override access controls.
-* **IGA Admin Governance:** Natively intercepts elevated privilege requests and enforces multi-party quorum sign-offs prior to authorization token issuance.
-* **Zero-Knowledge Security:** Eliminates centralized credential storage, rendering credential-stuffing and database leaks ineffective.
+- trying to act alone is **blocked and logged**;
+- a request carries a written reason and is sealed with a **SHA-256 hash**;
+- the requester can **never approve their own request**;
+- a **second, independently signed-in admin** must co-sign before anything happens;
+- access is **time-boxed** (10 minutes) and **every view is audited**;
+- even **admitting a new admin** needs two approvers, so nobody can create a sock-puppet second
+  approver.
 
-## 5. Prototype & Storytelling
-Our 2-minute video walkthrough demonstrates:
-1. **Unilateral Access Block:** Admin 1 attempts to unmask restricted financial records and grant elevated root privileges. The action is blocked by TideCloak policy enforcement and pushed into a pending quorum queue.
-2. **Multi-Party Verification:** Admin 2 (Security Auditor) logs in from an independent session, inspects the request log, and provides the cryptographic co-signature.
-3. **Threshold Fulfilled:** The session authorization completes, granting temporary decryption access strictly after quorum consensus is verified.
+### 2. Trust constraint insight
 
-*(Note on Prototype Architecture: TideCloak IGA governance flows are demonstrated via integrated API endpoints with mock fail-safes clearly identified in source code comments for testing reliability).*
+**Authority and custody.** No single administrator should be able to approve a high-risk action
+alone, and customer data should not depend on one person's honesty.
 
----
+The usual answer — "two-person approval" — only works if the second approval really comes from a
+second person. If one server stores every password and issues every login, whoever controls that
+server can impersonate the second approver and approve their own request. The approval becomes
+theatre. Removing that last trusted party is what makes the rule credible.
 
-## Setup & Run Instructions
+### 3. Value & impact
 
-### Prerequisites
-* Node.js 18+ installed
-* Git
+- **Banks, hospitals, universities:** a rogue admin or a stolen admin password is no longer enough to
+  leak customer, patient or student records.
+- **Auditors and regulators** get a complete record of who asked, why, who approved, and who viewed
+  what — without trusting the people being audited.
+- **Day-to-day work is not slowed down:** an approval takes seconds and access expires on its own.
 
-### Local Setup
-1. Clone the repository:
-   ```bash
-   git clone [https://github.com/MrBarry7/Rmit-hackathon-2026.git](https://github.com/MrBarry7/Rmit-hackathon-2026.git)
-   cd Rmit-hackathon-2026
+Example: a bank analyst needs a customer's full card number for a regulator request. They open a
+request with the regulator's reference; the security auditor approves it from their own device; the
+analyst sees the data for ten minutes; the audit log shows the whole chain.
+
+### 4. Why TideCloak matters
+
+Two-person approval is only as strong as the identity behind each signature. TideCloak provides it:
+
+- **Threshold identity:** Tide splits each identity key across a decentralised network of nodes. No
+  server — not ours, not the identity provider's — ever holds a whole key, so nobody can mint a login
+  for the second admin and approve their own request.
+- **Device-bound tokens (DPoP):** each TideCloak token is bound to a key on the signer's device. Our
+  server verifies the token signature **and** the DPoP proof on every request, so a stolen token
+  replayed from another machine is rejected.
+- **Approvals tied to verified identities:** every signature on a ticket records the signer's Tide
+  identity and the thumbprint of the device key they signed with.
+
+**How it is wired:** `/dashboard` signs in with TideCloak and sends every API call through
+`secureFetch` (DPoP). The server (`src/lib/auth/protect.ts`, `src/lib/auth/verifyDpop.ts`) verifies the
+token and proof, maps the Tide identity to an admin record, and only then runs the quorum rules
+(`src/lib/quorum/serverStore.ts` → `withAdmin`).
+
+### 5. Prototype & storytelling
+
+Judges should look for these moments:
+
+1. **Blocked alone** — Operations Admin clicks *Decrypt alone*: red "Unilateral attempt blocked", HTTP 403, logged.
+2. **Request with a reason** — *Request access* opens ticket `QG-…` at **1 of 2**, with its hash.
+3. **No self-approval** — *Try to self-approve* is refused (four-eyes rule).
+4. **Independent co-signature** — Security Auditor, signed in separately, clicks *Sign & approve* → **2 of 2**.
+5. **Time-boxed access** — the vault card turns green, records decrypt on screen, a 10-minute countdown starts.
+6. **Admitting an admin** — a new sign-up is *pending*; admission needs one approver to request and a different one to co-sign.
+7. **Database** — live tables for admins, tickets, signatures, audit log and customers (customers stay masked unless *you* hold an approved ticket).
+
+#### What is real and what is mocked
+
+| Component | Status |
+|---|---|
+| Two-person rule, no self-approval, 10-minute window, admin admission | **Real** — enforced on the server |
+| Ledger released only under an approved ticket | **Real** — server-side check, every view logged |
+| SQLite database (admins, sessions, tickets, signatures, audit, customers) | **Real** — `quorumgate/data/quorumgate.db` |
+| TideCloak login with DPoP, server-side token + proof verification (`/dashboard`) | **Real code, needs a licensed TideCloak realm** — see note |
+| Local sign-in (`/login`, scrypt-hashed passwords) | **Stand-in** for TideCloak when no licensed realm is available |
+| Customer ledger | **Sample data** — all names and numbers are fictional |
+| Demo admin accounts and **Reset demo** button | **Demo only** — not for real use |
+| "Elevated root privileges" | **Simulated outcome** — the approval flow is real; no real system is elevated |
+
+> **Note on TideCloak licensing.** During the event, automated realm licensing failed on Tide's
+> licensing service (`TIDE-IDPEXT-VENDOR-KEYGEN_FAILED`, `Midgard FinalizeWallet 500`) for two
+> licence emails. The TideCloak login is fully wired and works once a realm is licensed through the
+> TideCloak admin console (see Setup). Until then, use the local stand-in login — every quorum rule,
+> the database and the UI behave identically.
+
+## Setup
+
+Requirements: **Node.js 22.5+**, **Docker Desktop** (for TideCloak).
+
+<!-- 1. Get the code -->
+Download `sourcecodes.zip` from this repository and unzip it (or clone the repo), then:
+
+```bash
+cd quorumgate
+npm install
+```
+
+<!-- 2. Start TideCloak -->
+Open Docker Desktop, then:
+
+```bash
+docker run -d --name tidecloak -p 8080:8080 \
+  -e KC_BOOTSTRAP_ADMIN_USERNAME=admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=<choose-a-password> \
+  tideorg/tidecloak-dev:latest
+```
+
+Open <http://localhost:8080>, sign in as `admin`, create a new app with these URIs, activate the Tide
+licence, then download the adapter config (`tidecloak.json`) into **`quorumgate/data/tidecloak.json`**:
+
+| Setting | Value |
+|---|---|
+| Home URL | `http://localhost:3000` |
+| Valid redirect URIs | `http://localhost:3000/*` |
+| Web origins | `http://localhost:3000` |
+
+(Alternatively `npm run init` scripts all of this; it needs `.env` filled in from `.env.example`.)
+
+<!-- 3. Run the app -->
+```bash
+npm run dev
+```
+
+Open <http://localhost:3000>:
+
+- **Sign in with TideCloak:** go to <http://localhost:3000/dashboard>. Sign in with two different Tide
+  accounts (one normal window, one private window). The first two Tide identities become the
+  approvers; later ones start as pending.
+- **Without TideCloak (stand-in):** click **Admin sign in** on the home page and use the demo admins:
+
+| Admin | Email | Password |
+|---|---|---|
+| Operations Admin | `ops.admin@quorumgate.demo` | `QuorumGate2026!` |
+| Security Auditor | `security.auditor@quorumgate.demo` | `QuorumGate2026!` |
+
+Full walkthrough and project layout: [quorumgate/README.md](quorumgate/README.md).
