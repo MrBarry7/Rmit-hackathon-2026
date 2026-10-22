@@ -1,51 +1,69 @@
 "use client";
 
 import { useTideCloak } from "@tidecloak/nextjs";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { QuorumConsole } from "@/components/QuorumConsole";
+import { AdminNav } from "@/components/AdminNav";
 import { Icon } from "@/components/Icon";
 import { liveApi } from "@/lib/quorum/clientApi";
 
-// LIVE console. The identity shown here comes from the TideCloak session; every API call carries
-// the DPoP-bound token, and the server re-verifies it. hasRealmRole() below only picks what to
-// render — the API enforces the real `quorum-approver` check.
+interface Me { name: string; title: string; role: "approver" | "pending" }
+
+// LIVE console with TideCloak login. Every API call goes through secureFetch, which sends the
+// DPoP-bound TideCloak token plus a fresh proof signed by this device's key; the server verifies
+// both before doing anything. Whether you are an approver is decided by the server, not here.
 export default function DashboardPage() {
-  const { secureFetch, logout, hasRealmRole, getValueFromIdToken } = useTideCloak();
+  const { secureFetch, logout } = useTideCloak();
+  const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
 
-  // secureFetch attaches `Authorization: DPoP <token>` plus a fresh DPoP proof signed by this
-  // device's key for this exact URL + method. The server rejects plain Bearer replays.
-  const api = useMemo(() => liveApi((url, init) => secureFetch(url, init)), [secureFetch]);
+  const fetcher = useMemo(() => (url: string, init?: RequestInit) => secureFetch(url, init), [secureFetch]);
+  const api = useMemo(() => liveApi(fetcher, "live"), [fetcher]);
 
-  const username = String(getValueFromIdToken("preferred_username") ?? "");
-  const title = username === "auditor" ? "Security Auditor" : username === "admin" ? "Operations Admin" : "Administrator";
+  useEffect(() => {
+    fetcher("/api/whoami")
+      .then(async (r) => {
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error || `${r.status}`);
+        setMe(d.user);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [fetcher]);
 
-  if (!hasRealmRole("quorum-approver")) {
+  const nav = <AdminNav active="console" consoleHref="/dashboard" databaseHref="/dashboard/database" fetcher={fetcher} onLogout={logout} />;
+
+  if (error) {
     return (
       <div className="center-page">
         <div className="card narrow">
-          <span className="tile green"><Icon name="check" size={18} /></span>
           <div className="eyebrow">Signed in with TideCloak</div>
-          <h2>Welcome{username ? `, ${username.slice(0, 12)}` : ""}</h2>
+          <h2>The server could not verify your session</h2>
+          <p className="muted small">{error}</p>
+          <button className="btn tinted" onClick={logout}><Icon name="logout" size={15} /> Sign out</button>
+        </div>
+      </div>
+    );
+  }
+  if (me === undefined) return <div className="center-page"><div className="spinner" /><p className="muted">Verifying your TideCloak token…</p></div>;
+  if (!me) return null;
+
+  if (me.role !== "approver") {
+    return (
+      <div className="center-page">
+        <div className="card narrow">
+          <span className="tile orange"><Icon name="clock" size={18} /></span>
+          <div className="eyebrow">Signed in with TideCloak</div>
+          <h2>Welcome, {me.name.split(" ")[0]}</h2>
           <p className="muted">
-            Your Tide account is ready, but you are not an approver yet. In QuorumGate even that is protected: an
-            existing admin can propose giving you the <code>quorum-approver</code> role, and TideCloak holds it as a
-            change request until the realm&apos;s admin quorum approves it. Nobody can quietly add a sock-puppet approver.
+            Your Tide identity is verified, but your account is <b>pending</b>. One approver must request your admission
+            and a <b>second, different approver</b> must co-sign it. Until then you can&apos;t see protected data or
+            approve anything. Refresh this page once you&apos;re admitted.
           </p>
-          <button className="btn tinted" onClick={logout}><Icon name="logout" size={16} /> Sign out</button>
+          <button className="btn tinted" onClick={logout}><Icon name="logout" size={15} /> Sign out</button>
         </div>
       </div>
     );
   }
 
-  return (
-    <QuorumConsole
-      api={api}
-      title={title}
-      headerRight={
-        <button className="icon-btn" onClick={logout} title="Sign out" aria-label="Sign out">
-          <Icon name="logout" size={16} />
-        </button>
-      }
-    />
-  );
+  return <QuorumConsole api={api} title={me.title} headerRight={nav} />;
 }
