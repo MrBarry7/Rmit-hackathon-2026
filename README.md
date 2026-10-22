@@ -1,4 +1,12 @@
+# QuorumGate — zero-blind-trust critical access vault
+
 [![Built with TideCloak](https://tide.org/badges/built-with-tidecloak.svg)](https://tide.org/tidecloak?utm_source=github&utm_medium=readme&utm_campaign=unlocked)
+
+*RMIT Hackathon 2026 · Challenge 2 · "Build without blind trust"* — prototype
+
+> One IT admin — or one stolen admin password — should never be able to export a bank's customer
+> ledger or grant themselves root. QuorumGate makes every high-risk action need **two independent
+> admins**, and the server enforces it.
 
 ## Project overview
 
@@ -63,11 +71,13 @@ Two-person approval is only as strong as the identity behind each signature. Tid
   replayed from another machine is rejected.
 - **Approvals tied to verified identities:** every signature on a ticket records the signer's Tide
   identity and the thumbprint of the device key they signed with.
+- **Governed approver role:** changing who is an approver is itself a quorum-approved change request.
 
 **How it is wired:** `/dashboard` signs in with TideCloak and sends every API call through
 `secureFetch` (DPoP). The server (`src/lib/auth/protect.ts`, `src/lib/auth/verifyDpop.ts`) verifies the
 token and proof, maps the Tide identity to an admin record, and only then runs the quorum rules
-(`src/lib/quorum/serverStore.ts` → `withAdmin`).
+(`src/lib/quorum/serverStore.ts` → `withApprover`). Every API route accepts either a TideCloak token
+or a local session.
 
 ### 5. Prototype & storytelling
 
@@ -85,34 +95,54 @@ Judges should look for these moments:
 
 | Component | Status |
 |---|---|
-| Two-person rule, no self-approval, 10-minute window, admin admission | **Real** — enforced on the server |
-| Ledger released only under an approved ticket | **Real** — server-side check, every view logged |
+| Two-person rule, no self-approval, 10-minute window | **Real** — enforced on the server (`src/lib/quorum/engine.ts`) |
+| Admitting a new admin needs two approvers | **Real** — `ADMIT_ADMIN` ticket; promoted only at 2 of 2 (`src/app/api/tickets/route.ts`) |
+| Ledger released only under an approved ticket | **Real** — server-side check, every view logged (`src/app/api/records/route.ts`) |
 | SQLite database (admins, sessions, tickets, signatures, audit, customers) | **Real** — `quorumgate/data/quorumgate.db` |
 | TideCloak login with DPoP, server-side token + proof verification (`/dashboard`) | **Real code, needs a licensed TideCloak realm** — see note |
-| Local sign-in (`/login`, scrypt-hashed passwords) | **Stand-in** for TideCloak when no licensed realm is available |
+| Local sign-in (`/login`, scrypt-hashed passwords, httpOnly session cookie) | **Stand-in** for TideCloak when no licensed realm is available |
 | Customer ledger | **Sample data** — all names and numbers are fictional |
-| Demo admin accounts and **Reset demo** button | **Demo only** — not for real use |
+| Demo admin accounts | **Demo only** — fixed demo password, not for real use |
+| **Reset demo** button | **Demo only** — clears requests, signatures and audit log so the walkthrough can be repeated. A real deployment must not have it (one admin erasing the audit trail is exactly the power QuorumGate removes). Disable with `DEMO_RESET=off` in `.env`. |
 | "Elevated root privileges" | **Simulated outcome** — the approval flow is real; no real system is elevated |
 
 > **Note on TideCloak licensing.** During the event, automated realm licensing failed on Tide's
 > licensing service (`TIDE-IDPEXT-VENDOR-KEYGEN_FAILED`, `Midgard FinalizeWallet 500`) for two
-> licence emails. The TideCloak login is fully wired and works once a realm is licensed through the
-> TideCloak admin console (see Setup). Until then, use the local stand-in login — every quorum rule,
-> the database and the UI behave identically.
+> licence emails. The TideCloak login is fully wired and works once a realm is licensed. Until then,
+> the local stand-in login is used — every quorum rule, the database and the UI behave identically.
+>
+> **Why that matters:** with the local login, this server stores password hashes and creates
+> sessions, so whoever controls it could still impersonate the second admin. TideCloak removes that
+> last single point of trust.
 
 ## Setup
 
-Requirements: **Node.js 22.5+**, **Docker Desktop** (for TideCloak).
+Requirements: **Node.js 22.5+** (uses Node's built-in SQLite). **Docker Desktop** only if you want the TideCloak path.
 
-<!-- 1. Get the code -->
-Download `sourcecodes.zip` from this repository and unzip it (or clone the repo), then:
+### 1. Run the app (about 3 minutes, no Docker)
+
+Download `sourcecodes.zip` and unzip it (or clone the repo), then:
 
 ```bash
 cd quorumgate
 npm install
+npm run dev
 ```
 
-<!-- 2. Start TideCloak -->
+Open <http://localhost:3000>, click **Admin sign in**, and use the demo admins (created on first start, also listed on the sign-in page — click *Use* to fill them in):
+
+| Admin | Email | Password | Role |
+|---|---|---|---|
+| Aiman Hakim — Operations Admin | `ops.admin@quorumgate.demo` | `QuorumGate2026!` | Approver |
+| Priya Nair — Security Auditor | `security.auditor@quorumgate.demo` | `QuorumGate2026!` | Approver |
+
+Set `DEMO_ADMIN_PASSWORD` in `.env` before the first start to use a different password.
+
+> If `npm install` fails with a certificate error, your network is intercepting HTTPS
+> (e.g. a campus firewall). Use a phone hotspot.
+
+### 2. Optional: TideCloak path
+
 Open Docker Desktop, then:
 
 ```bash
@@ -132,21 +162,50 @@ licence, then download the adapter config (`tidecloak.json`) into **`quorumgate/
 
 (Alternatively `npm run init` scripts all of this; it needs `.env` filled in from `.env.example`.)
 
-<!-- 3. Run the app -->
-```bash
-npm run dev
+Then go to <http://localhost:3000/dashboard> and sign in with two different Tide accounts (one normal
+window, one private window). The first two Tide identities become the approvers; later ones start as pending.
+
+## Test the core flow
+
+Use **two browser windows**: a normal one and a private/incognito one (Cmd+Shift+N).
+
+| # | Window | Do this | You should see |
+|---|---|---|---|
+| 1 | Normal | Sign in as **Aiman** | Console with the sealed Customer Ledger card |
+| 2 | Normal | Click **Decrypt alone** | Red *Unilateral attempt blocked* alert; server returns 403; logged as BLOCKED |
+| 3 | Normal | Click **Request access**, type a reason, **Sign & send** | Ticket QG-… with a SHA-256 hash, quorum ring at *1 of 2* |
+| 4 | Normal | Click **Try to self-approve** | Refused — four-eyes rule; logged as REJECTED |
+| 5 | Incognito | Sign in as **Priya**, click **Sign & approve** | Ticket becomes *Approved (2 of 2)* |
+| 6 | Normal | Wait up to 4 seconds | Card turns green, records decrypt, 10-minute countdown starts; each view logged as ACCESSED |
+| 7 | Either | Click **Database** | Live tables: admin accounts, tickets, signatures, audit log, customer records |
+
+Also try — **admitting a new admin needs two approvers too**:
+
+1. In a third window, **Create account** (e.g. "Ben Tan", IT Administrator). Ben is *pending*: he
+   cannot see data, approve, or open the database.
+2. As Aiman, open **Database → Admin accounts** and click **Admit** next to Ben. This opens an
+   "Admit new admin: Ben Tan" ticket at 1 of 2. Aiman cannot approve it himself.
+3. As Priya, click **Sign & approve** on that ticket. Ben becomes an approver once he refreshes.
+
+On the Database page as Priya, customer records stay masked — only the admin who was granted access
+sees real values.
+
+## Project layout
+
+```text
+src/lib/quorum/engine.ts         Quorum rules (two-person, no self-approval, access window)
+src/lib/quorum/serverStore.ts    Loads/saves engine state; withApprover() = TideCloak OR local session
+src/lib/db.ts                    SQLite schema, demo admin seeding, persistence
+src/lib/auth/local.ts            Local sign-up / sign-in / sessions (scrypt)
+src/lib/auth/protect.ts          Server-side TideCloak JWT + DPoP verification
+src/app/api/records/route.ts     Ledger API — plaintext only under an approved ticket
+src/app/api/tickets/route.ts     Create / approve / deny tickets
+src/app/api/db/route.ts          Read-only database viewer (approvers only, never password hashes)
+src/app/(public)/                Landing, login, console, database pages
+src/app/(live)/                  TideCloak-login console (needs a licensed realm)
+src/components/                  UI: console, network animation, effects
+scripts/init-tidecloak.sh        TideCloak bootstrap
 ```
 
-Open <http://localhost:3000>:
-
-- **Sign in with TideCloak:** go to <http://localhost:3000/dashboard>. Sign in with two different Tide
-  accounts (one normal window, one private window). The first two Tide identities become the
-  approvers; later ones start as pending.
-- **Without TideCloak (stand-in):** click **Admin sign in** on the home page and use the demo admins:
-
-| Admin | Email | Password |
-|---|---|---|
-| Operations Admin | `ops.admin@quorumgate.demo` | `QuorumGate2026!` |
-| Security Auditor | `security.auditor@quorumgate.demo` | `QuorumGate2026!` |
-
-Full walkthrough and project layout: [quorumgate/README.md](quorumgate/README.md).
+Built with Next.js, TypeScript and Node's built-in SQLite, starting from Tide's
+nextjs-customer-portal template. Full walkthrough: [quorumgate/README.md](quorumgate/README.md).
