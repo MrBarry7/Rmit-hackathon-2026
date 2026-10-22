@@ -1,0 +1,11 @@
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+.next/
+dist/
+.tide-pack/
+.env*
+node_modules/
+.next/
