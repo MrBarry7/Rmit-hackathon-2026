@@ -75,6 +75,7 @@ Also try — **admitting a new admin needs two approvers too**:
 | SQLite database: users, sessions, tickets, signatures, audit log, customers | **Real** — `data/quorumgate.db` |
 | Customer ledger data | **Sample data** — every name and number is fictional |
 | Demo admin accounts | **Prototype convenience** — fixed demo password, not for real use |
+| **Reset demo** button (header) | **Demo only** — clears requests, signatures and audit log so the walkthrough can be repeated; accounts are kept. A real deployment must not have it (one admin erasing the audit trail is the power QuorumGate removes). Disable with `DEMO_RESET=off` in `.env`. |
 | "Elevated root privileges" | **Simulated outcome** — the approval flow is real; no real system is elevated |
 | TideCloak login (threshold identity, DPoP device-bound tokens, IGA-governed approver role) | **Built but not running** — see below |
 
