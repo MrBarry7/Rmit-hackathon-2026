@@ -31,9 +31,9 @@ export default function ConsolePage() {
           <div className="eyebrow">Account created</div>
           <h2>Welcome, {me.name.split(" ")[0]}</h2>
           <p className="muted">
-            Your account is <b>pending</b>. QuorumGate already has its two founding approvers, and new admins can&apos;t
-            see protected data or approve anything until they are admitted. That rule is what stops anyone from creating
-            a sock-puppet second approver.
+            Your account is <b>pending</b>. To be admitted, one approver requests your admission and a{" "}
+            <b>second, different approver</b> must co-sign it. Until then you can&apos;t see protected data or approve
+            anything — that rule stops anyone from creating a sock-puppet second approver. Refresh this page once you&apos;re            admitted.
           </p>
           <button className="btn tinted" onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); window.location.href = "/login"; }}>
             <Icon name="logout" size={15} /> Sign out

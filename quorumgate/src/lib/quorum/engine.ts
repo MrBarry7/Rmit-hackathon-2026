@@ -62,23 +62,31 @@ export async function createTicket(
   state: EngineState,
   caller: Caller,
   op: OperationId,
-  reason: string
+  reason: string,
+  target?: { sub: string; name: string }
 ): Promise<Ticket> {
   if (!OPERATIONS[op]) throw new QuorumError("Unknown operation", 400);
   const cleanReason = reason.trim().slice(0, 280);
   if (cleanReason.length < 8) throw new QuorumError("A business justification (8+ characters) is required", 400);
-  if (state.tickets.some((t) => t.status === "PENDING" && t.op === op && t.requester.sub === caller.sub)) {
+  if (op === "ADMIT_ADMIN") {
+    if (!target) throw new QuorumError("Choose the account to admit", 400);
+    if (target.sub === caller.sub) throw new QuorumError("You cannot admit yourself", 403);
+    if (state.tickets.some((t) => t.status === "PENDING" && t.op === op && t.target?.sub === target.sub)) {
+      throw new QuorumError(`${target.name} already has a pending admission request`, 409);
+    }
+  } else if (state.tickets.some((t) => t.status === "PENDING" && t.op === op && t.requester.sub === caller.sub)) {
     throw new QuorumError("You already have a pending request for this operation", 409);
   }
 
   const createdAt = new Date().toISOString();
   const id = `QG-${Math.random().toString(36).slice(2, 6).toUpperCase()}${Date.now().toString(36).slice(-3).toUpperCase()}`;
-  const hash = await sha256Hex(JSON.stringify({ id, op, reason: cleanReason, requester: caller.sub, createdAt }));
+  const hash = await sha256Hex(JSON.stringify({ id, op, target: target?.sub ?? null, reason: cleanReason, requester: caller.sub, createdAt }));
 
   const ticket: Ticket = {
     id,
     hash,
     op,
+    target,
     reason: cleanReason,
     requester: { sub: caller.sub, name: caller.name },
     createdAt,
@@ -89,8 +97,13 @@ export async function createTicket(
     ],
   };
   state.tickets.unshift(ticket);
-  recordUnilateralAttempt(state, caller, op);
-  log(state, { actor: caller.name, kind: "REQUESTED", detail: `Opened quorum ticket (1/${THRESHOLD} signatures)`, ticketId: id });
+  if (op !== "ADMIT_ADMIN") recordUnilateralAttempt(state, caller, op);
+  log(state, {
+    actor: caller.name,
+    kind: "REQUESTED",
+    detail: op === "ADMIT_ADMIN" ? `Requested admission of ${target?.name} (1/${THRESHOLD} signatures)` : `Opened quorum ticket (1/${THRESHOLD} signatures)`,
+    ticketId: id,
+  });
   return ticket;
 }
 
@@ -113,8 +126,9 @@ export function approveTicket(state: EngineState, caller: Caller, id: string): T
   if (t.signatures.length >= t.threshold) {
     t.status = "GRANTED";
     t.grantedAt = new Date().toISOString();
-    t.expiresAt = new Date(Date.now() + ACCESS_WINDOW_MIN * 60_000).toISOString();
-    log(state, { actor: "QuorumGate", kind: "GRANTED", detail: `Quorum reached — access window ${ACCESS_WINDOW_MIN} min for ${t.requester.name}`, ticketId: id });
+    // Admission is permanent; data access and root are time-boxed.
+    if (t.op !== "ADMIT_ADMIN") t.expiresAt = new Date(Date.now() + ACCESS_WINDOW_MIN * 60_000).toISOString();
+    log(state, { actor: "QuorumGate", kind: "GRANTED", detail: t.op === "ADMIT_ADMIN" ? `Quorum reached — ${t.target?.name} admitted as approver` : `Quorum reached — access window ${ACCESS_WINDOW_MIN} min for ${t.requester.name}`, ticketId: id });
   }
   return t;
 }

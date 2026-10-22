@@ -220,7 +220,7 @@ export function QuorumConsole({ api, title, headerRight, refreshKey }: Props) {
               <QuorumRing have={focus?.signatures.length ?? 0} need={focus?.threshold ?? snap?.threshold ?? 2} granted={focus?.status === "GRANTED"} />
               <div className="ring-text">
                 <div className="ring-label">{focus ? (focus.status === "PENDING" ? "Waiting for signatures" : focus.status === "GRANTED" ? "Quorum reached" : `Ticket ${focus.status.toLowerCase()}`) : "No active request"}</div>
-                <div className="ring-sub">{focus ? OPERATIONS[focus.op].label : "High-risk actions need two people."}</div>
+                <div className="ring-sub">{focus ? `${OPERATIONS[focus.op].label}${focus.target ? `: ${focus.target.name}` : ""}` : "High-risk actions need two people."}</div>
                 {focus && <div className="ring-id mono">{focus.id}</div>}
               </div>
             </div>
@@ -401,11 +401,11 @@ function TicketCard({ t, meSub, busy, onApprove, onDeny }: { t: Ticket; meSub?: 
   return (
     <article className={`ticket ${t.status.toLowerCase()}`}>
       <div className="ticket-top">
-        <span className={`tile ${t.op === "UNMASK_LEDGER" ? "blue" : "purple"}`}>
-          <Icon name={t.op === "UNMASK_LEDGER" ? "lock" : "key"} size={16} />
+        <span className={`tile ${t.op === "UNMASK_LEDGER" ? "blue" : t.op === "ADMIT_ADMIN" ? "green" : "purple"}`}>
+          <Icon name={t.op === "UNMASK_LEDGER" ? "lock" : t.op === "ADMIT_ADMIN" ? "users" : "key"} size={16} />
         </span>
         <div className="row-text">
-          <div className="row-title">{OPERATIONS[t.op].label}</div>
+          <div className="row-title">{OPERATIONS[t.op].label}{t.target ? `: ${t.target.name}` : ""}</div>
           <div className="row-sub">by {t.requester.name} · {fmtTime(t.createdAt)}</div>
         </div>
         <span className={`pill ${t.status === "GRANTED" ? "green" : t.status === "PENDING" ? "orange" : t.status === "DENIED" ? "red" : ""}`}>{statusLabel}</span>

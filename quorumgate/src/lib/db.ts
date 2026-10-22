@@ -75,6 +75,10 @@ export function db(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_signatures_ticket ON signatures(ticket_id);
   `);
+  // Migration: admission tickets name a target account.
+  for (const col of ["target_id TEXT", "target_name TEXT"]) {
+    try { d.exec(`ALTER TABLE tickets ADD COLUMN ${col}`); } catch { /* already there */ }
+  }
   // Seed the fictional sample ledger once.
   const count = (d.prepare("SELECT COUNT(*) AS n FROM customers").get() as { n: number }).n;
   if (count === 0) {
@@ -126,6 +130,7 @@ export function loadEngineState(): { tickets: Ticket[]; audit: AuditEvent[] } {
       grantedAt: (t.granted_at as string) ?? undefined,
       expiresAt: (t.expires_at as string) ?? undefined,
       deniedBy: denied,
+      target: t.target_id ? { sub: String(t.target_id), name: String(t.target_name) } : undefined,
       signatures: sigs
         .filter((s) => s.ticket_id === t.id)
         .map((s) => ({ sub: String(s.user_id), name: String(s.name), role: s.role, at: String(s.signed_at), keyThumbprint: String(s.key_thumbprint) })),
@@ -143,12 +148,13 @@ export function saveEngineState(state: { tickets: Ticket[]; audit: AuditEvent[] 
   d.exec("BEGIN");
   try {
     d.exec("DELETE FROM signatures; DELETE FROM tickets; DELETE FROM audit;");
-    const it = d.prepare(`INSERT INTO tickets (id, op, reason, requester_id, requester_name, status, threshold, hash, created_at, granted_at, expires_at, denied_by)
-                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const it = d.prepare(`INSERT INTO tickets (id, op, reason, requester_id, requester_name, status, threshold, hash, created_at, granted_at, expires_at, denied_by, target_id, target_name)
+                          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const is = d.prepare("INSERT INTO signatures (ticket_id, user_id, name, role, signed_at, key_thumbprint) VALUES (?, ?, ?, ?, ?, ?)");
     for (const t of state.tickets) {
       it.run(t.id, t.op, t.reason, t.requester.sub, t.requester.name, t.status, t.threshold, t.hash, t.createdAt,
-        t.grantedAt ?? null, t.expiresAt ?? null, t.deniedBy ? JSON.stringify(t.deniedBy) : null);
+        t.grantedAt ?? null, t.expiresAt ?? null, t.deniedBy ? JSON.stringify(t.deniedBy) : null,
+        t.target?.sub ?? null, t.target?.name ?? null);
       for (const s of t.signatures) is.run(t.id, s.sub, s.name, s.role, s.at, s.keyThumbprint);
     }
     const ia = d.prepare("INSERT INTO audit (at, actor, kind, detail, ticket_id) VALUES (?, ?, ?, ?, ?)");

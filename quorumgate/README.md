@@ -51,9 +51,14 @@ Use **two browser windows**: a normal one and a private/incognito one (`Cmd+Shif
 | 6 | Normal | Wait up to 4 seconds | Card turns green, records decrypt on screen, 10-minute countdown starts; each view logged as `ACCESSED` |
 | 7 | Either | Click **Database** | Live tables: admin accounts, tickets, signatures, audit log, customer records |
 
-Also try:
-- **Create account** with a new email → the account is **pending**: it cannot see data, approve, or open
-  the database. This stops anyone creating a fake second approver.
+Also try — **admitting a new admin needs two approvers too**:
+
+1. In a third window, **Create account** (e.g. "Ben Tan", IT Administrator). Ben is **pending**: he
+   cannot see data, approve, or open the database.
+2. As Aiman, open **Database → Admin accounts** and click **Admit** next to Ben. This opens an
+   "Admit new admin: Ben Tan" ticket at 1 of 2. Aiman cannot approve it himself.
+3. As Priya, click **Sign & approve** on that ticket in the console. Ben becomes an approver; he
+   refreshes his page and gets access. Nobody can add a sock-puppet second approver alone.
 - On the Database page as Priya, **Customer records** stay masked — only the admin who was granted
   access sees real values, even in the database view.
 
@@ -64,6 +69,7 @@ Also try:
 | Component | Status |
 |---|---|
 | Two-person rule (2 distinct admins, no self-approval, 10-minute access window) | **Real** — enforced on the server (`src/lib/quorum/engine.ts`) |
+| Admitting a new admin needs two approvers | **Real** — `ADMIT_ADMIN` ticket; account promoted only at 2 of 2 (`src/app/api/tickets/route.ts`) |
 | Ledger API releases data only under an approved ticket | **Real** — `src/app/api/records/route.ts` |
 | Sign-up / sign-in, salted scrypt password hashes, httpOnly session cookie | **Real**, but a **stand-in for TideCloak** (see below) |
 | SQLite database: users, sessions, tickets, signatures, audit log, customers | **Real** — `data/quorumgate.db` |

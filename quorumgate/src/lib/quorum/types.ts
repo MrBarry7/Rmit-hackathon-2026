@@ -1,6 +1,6 @@
 // Shared types for QuorumGate tickets, used by both the server store and the UI.
 
-export type OperationId = "UNMASK_LEDGER" | "GRANT_ROOT";
+export type OperationId = "UNMASK_LEDGER" | "GRANT_ROOT" | "ADMIT_ADMIN";
 
 export interface OperationDef {
   id: OperationId;
@@ -16,6 +16,13 @@ export const OPERATIONS: Record<OperationId, OperationDef> = {
     risk: "CRITICAL",
     description:
       "Reveals full names, national IDs, card numbers and balances for every customer in the ledger.",
+  },
+  ADMIT_ADMIN: {
+    id: "ADMIT_ADMIN",
+    label: "Admit new admin",
+    risk: "HIGH",
+    description:
+      "Turns a pending account into a quorum approver. Needs two approvers so nobody can add a sock-puppet second admin.",
   },
   GRANT_ROOT: {
     id: "GRANT_ROOT",
@@ -40,6 +47,7 @@ export interface Ticket {
   id: string;
   hash: string; // sha256 over the immutable request content
   op: OperationId;
+  target?: { sub: string; name: string }; // ADMIT_ADMIN: the pending account being admitted
   reason: string;
   requester: { sub: string; name: string };
   createdAt: string;

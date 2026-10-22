@@ -10,7 +10,7 @@ import { state } from "@/lib/quorum/serverStore";
 export const GET = withSession((_req, user) => {
   const d = db();
   const users = d.prepare("SELECT id, email, name, title, role, created_at FROM users ORDER BY created_at").all();
-  const tickets = d.prepare("SELECT id, op, status, requester_name, threshold, hash, reason, created_at, granted_at, expires_at FROM tickets ORDER BY created_at DESC").all();
+  const tickets = d.prepare("SELECT id, op, status, requester_name, target_id, target_name, threshold, hash, reason, created_at, granted_at, expires_at FROM tickets ORDER BY created_at DESC").all();
   const signatures = d.prepare("SELECT ticket_id, name, role, signed_at, key_thumbprint FROM signatures ORDER BY signed_at DESC").all();
   const audit = d.prepare("SELECT id, at, actor, kind, detail, ticket_id FROM audit ORDER BY id DESC LIMIT 200").all();
   const granted = user.role === "approver" && !!activeGrant(state(), callerFromUser(user).sub, "UNMASK_LEDGER");

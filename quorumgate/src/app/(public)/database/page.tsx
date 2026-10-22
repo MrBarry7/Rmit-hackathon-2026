@@ -18,7 +18,7 @@ interface DbData {
 }
 
 const TABLES: { key: keyof Omit<DbData, "customersMasked" | "file">; label: string; icon: string; note: string }[] = [
-  { key: "users", label: "Admin accounts", icon: "users", note: "Password hashes are never sent to the browser." },
+  { key: "users", label: "Admin accounts", icon: "users", note: "Pending accounts need two approvers to be admitted. Password hashes are never sent to the browser." },
   { key: "tickets", label: "Approval tickets", icon: "ticket", note: "Each ticket is sealed with a SHA-256 hash of its content." },
   { key: "signatures", label: "Signatures", icon: "pen", note: "One row per admin who signed a ticket." },
   { key: "audit", label: "Audit log", icon: "clock", note: "Every blocked attempt, signature, grant and data view." },
@@ -38,6 +38,33 @@ export default function DatabasePage() {
   const [data, setData] = useState<DbData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<(typeof TABLES)[number]["key"]>("users");
+  const [flash, setFlash] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  // Opens an ADMIT_ADMIN quorum ticket. A DIFFERENT approver must co-sign it in the console.
+  const admit = async (u: Row) => {
+    setBusyId(String(u.id));
+    try {
+      const res = await fetch("/api/tickets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "create", op: "ADMIT_ADMIN", targetId: u.id, reason: `Admit ${u.name} (${u.title}) as a quorum approver` }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Could not request admission");
+      setFlash({ kind: "ok", text: `Admission requested for ${u.name} — a second approver must co-sign in the console` });
+      await load();
+    } catch (e) {
+      setFlash({ kind: "err", text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusyId(null);
+    }
+  };
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 4500);
+    return () => clearTimeout(t);
+  }, [flash]);
 
   const load = useCallback(async () => {
     const r = await fetch("/api/db");
@@ -54,6 +81,17 @@ export default function DatabasePage() {
   }, [load]);
 
   const rows = data ? data[tab] : [];
+
+  const admitCell = (u: Row) => {
+    if (u.role !== "pending") return <span className="dim">—</span>;
+    const open = data?.tickets.find((t) => t.op === "ADMIT_ADMIN" && t.target_id === u.id && t.status === "PENDING");
+    if (open) return <a className="pill tiny tag-pending" href="/console">Awaiting 2nd signature · {String(open.id)}</a>;
+    return (
+      <button className="btn primary small" disabled={busyId === u.id} onClick={() => admit(u)}>
+        <Icon name="users" size={13} /> Admit
+      </button>
+    );
+  };
   const cols = rows.length ? Object.keys(rows[0]) : [];
   const meta = TABLES.find((t) => t.key === tab)!;
 
@@ -81,6 +119,7 @@ export default function DatabasePage() {
         </div>
 
         {error && <div className="notice"><Icon name="alert" size={16} /> {error}</div>}
+        {flash && <div className={`toast ${flash.kind}`}>{flash.text}</div>}
 
         <div className="db-tabs">
           {TABLES.map((t) => (
@@ -116,10 +155,13 @@ export default function DatabasePage() {
           ) : (
             <div className="db-table-wrap">
               <table className="db-table">
-                <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+                <thead><tr>{cols.map((c) => <th key={c}>{c}</th>)}{tab === "users" && <th>action</th>}</tr></thead>
                 <tbody>
                   {rows.map((r, i) => (
-                    <tr key={i}>{cols.map((c) => <td key={c}>{fmt(c, r[c])}</td>)}</tr>
+                    <tr key={i}>
+                      {cols.map((c) => <td key={c}>{fmt(c, r[c])}</td>)}
+                      {tab === "users" && <td>{admitCell(r)}</td>}
+                    </tr>
                   ))}
                 </tbody>
               </table>
