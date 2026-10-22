@@ -17,18 +17,21 @@ export default function DashboardPage() {
   const api = useMemo(() => liveApi((url, init) => secureFetch(url, init)), [secureFetch]);
 
   const username = String(getValueFromIdToken("preferred_username") ?? "");
-  const title = username === "auditor" ? "Admin 2 · Security Auditor" : username === "admin" ? "Admin 1 · Operations Admin" : "Administrator";
+  const title = username === "auditor" ? "Security Auditor" : username === "admin" ? "Operations Admin" : "Administrator";
 
   if (!hasRealmRole("quorum-approver")) {
     return (
       <div className="center-page">
         <div className="card narrow">
-          <h2>Not a quorum approver</h2>
+          <span className="tile green"><Icon name="check" size={18} /></span>
+          <div className="eyebrow">Signed in with TideCloak</div>
+          <h2>Welcome{username ? `, ${username.slice(0, 12)}` : ""}</h2>
           <p className="muted">
-            You are signed in with TideCloak, but your account does not hold the <code>quorum-approver</code> role.
-            Granting it is an IGA-governed change: existing admins must approve it in TideCloak.
+            Your Tide account is ready, but you are not an approver yet. In QuorumGate even that is protected: an
+            existing admin can propose giving you the <code>quorum-approver</code> role, and TideCloak holds it as a
+            change request until the realm&apos;s admin quorum approves it. Nobody can quietly add a sock-puppet approver.
           </p>
-          <button className="btn" onClick={logout}><Icon name="logout" size={16} /> Sign out</button>
+          <button className="btn tinted" onClick={logout}><Icon name="logout" size={16} /> Sign out</button>
         </div>
       </div>
     );
@@ -39,7 +42,7 @@ export default function DashboardPage() {
       api={api}
       title={title}
       headerRight={
-        <button className="btn ghost" onClick={logout} title="Sign out">
+        <button className="icon-btn" onClick={logout} title="Sign out" aria-label="Sign out">
           <Icon name="logout" size={16} />
         </button>
       }

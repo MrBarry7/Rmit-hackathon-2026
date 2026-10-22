@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ConsoleApi, RecordsResult, Snapshot } from "@/lib/quorum/clientApi";
 import { OPERATIONS, type OperationId, type Ticket } from "@/lib/quorum/types";
 import { Icon } from "./Icon";
+import { CountUp, ScrambleText, Spotlight, TiltCard } from "./Effects";
 
 interface Props {
   api: ConsoleApi;
@@ -14,6 +15,17 @@ interface Props {
 
 const fmtTime = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const short = (s: string, n = 10) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const initials = (name: string) => name.split(" ").map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+
+function useNow(active: boolean) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [active]);
+  return now;
+}
 
 export function QuorumConsole({ api, title, headerRight, refreshKey }: Props) {
   const [snap, setSnap] = useState<Snapshot | null>(null);
@@ -36,14 +48,14 @@ export function QuorumConsole({ api, title, headerRight, refreshKey }: Props) {
   }, [refresh, refreshKey]);
 
   useEffect(() => {
-    if (api.mode !== "live") return;
+    if (api.mode === "simulation") return;
     const t = setInterval(() => refresh().catch(() => {}), 4000); // see the other admin's signature arrive
     return () => clearInterval(t);
   }, [api.mode, refresh]);
 
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 4500);
+    const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -83,241 +95,265 @@ export function QuorumConsole({ api, title, headerRight, refreshKey }: Props) {
         setReason("");
         setBlocked(null);
       },
-      "Quorum ticket opened — waiting for an independent co-signer"
+      "Ticket opened — waiting for a second signature"
     );
 
   const me = snap?.me;
-  const pending = snap?.tickets.filter((t) => t.status === "PENDING") ?? [];
+  const tickets = snap?.tickets ?? [];
+  const pending = tickets.filter((t) => t.status === "PENDING");
   const blockedCount = snap?.audit.filter((a) => a.kind === "BLOCKED" || a.kind === "REJECTED").length ?? 0;
-  const rootGrant = snap?.tickets.find((t) => t.op === "GRANT_ROOT" && t.status === "GRANTED" && t.requester.sub === me?.sub);
-  const isLive = api.mode === "live";
+  const rootGrant = tickets.find((t) => t.op === "GRANT_ROOT" && t.status === "GRANTED" && t.requester.sub === me?.sub);
+  const focus = pending[0] ?? tickets[0];
+  const unlocked = rec?.masked === false;
+  const isLive = api.mode !== "simulation";
+  const now = useNow(unlocked || !!rootGrant);
 
-  const myTickets = useMemo(() => snap?.tickets ?? [], [snap]);
+  const remaining = (iso?: string) => {
+    if (!iso) return "";
+    const s = Math.max(0, Math.floor((Date.parse(iso) - now) / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  };
 
   return (
-    <div className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark"><Icon name="gate" size={20} /></span>
-          <div>
-            <div className="brand-name">QuorumGate</div>
-            <div className="brand-sub">Zero-blind-trust critical access vault</div>
-          </div>
-        </div>
-        <div className="topbar-right">
-          <span className={`mode-pill ${isLive ? "live" : "sim"}`}>
-            <span className="dot" />
-            {isLive ? "LIVE · TideCloak-verified identity" : "SIMULATION · mocked identities"}
-          </span>
-          {me && (
-            <div className="whoami">
-              <div className="avatar">{me.name.slice(0, 1).toUpperCase()}</div>
-              <div>
-                <div className="who-name">{me.name}</div>
-                <div className="who-title">{title}</div>
+    <div className="app">
+      <Backdrop />
+      <Spotlight />
+
+      <header className="nav">
+        <div className="nav-inner">
+          <a className="brand" href="/">
+            <span className="brand-mark"><Icon name="gate" size={18} /></span>
+            <span className="brand-name">QuorumGate</span>
+          </a>
+          <div className="nav-right">
+            <span className={`mode ${isLive ? "live" : "sim"}`}>
+              <span className="mode-dot" />
+              {api.mode === "live" ? "Live · TideCloak" : api.mode === "local" ? "Live · Local login" : "Simulation"}
+            </span>
+            {headerRight}
+            {me && (
+              <div className="me">
+                <span className="me-avatar">{initials(me.name)}</span>
+                <span className="me-text">
+                  <span className="me-name">{me.name}</span>
+                  <span className="me-role">{title}</span>
+                </span>
               </div>
-            </div>
-          )}
-          {headerRight}
+            )}
+          </div>
         </div>
       </header>
 
-      {!isLive && (
-        <div className="sim-banner">
-          <Icon name="alert" size={16} />
-          <span>
-            <b>Simulation mode.</b> Identities, key thumbprints and signatures on this page are <b>mocked</b> in the
-            browser — anyone can flip the persona switch. In live mode each signature comes from a separate TideCloak
-            login with a DPoP-bound key, verified on the server.
-          </span>
+      <main className="page">
+        {!isLive && (
+          <div className="notice">
+            <Icon name="alert" size={16} />
+            <span>
+              <b>Simulation mode.</b> The two admins, their keys and signatures are mocked in this browser. In live mode
+              every signature comes from a separate TideCloak login with a device-bound key, checked by the server.
+            </span>
+          </div>
+        )}
+
+        <div className="greeting">
+          <div>
+            <div className="kicker">{new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}</div>
+            <h1>{me ? `Hello, ${me.name.split(" ")[0]}` : "Loading…"}</h1>
+          </div>
+          <div className="chips">
+            <Chip icon="users" label={`${snap?.threshold ?? 2}-of-${snap?.threshold ?? 2} quorum`} />
+            <Chip icon="clock" label={<><CountUp value={pending.length} /> pending</>} tone={pending.length ? "orange" : undefined} />
+            <Chip icon="shield" label={<><CountUp value={blockedCount} /> blocked</>} tone={blockedCount ? "red" : undefined} />
+          </div>
         </div>
-      )}
 
-      <section className="stats">
-        <Stat icon="users" label="Signatures required" value={`${snap?.threshold ?? 2} of ${snap?.threshold ?? 2}`} hint="requester + independent approver" />
-        <Stat icon="clock" label="Pending quorum tickets" value={String(pending.length)} hint="awaiting co-signature" accent={pending.length ? "warn" : undefined} />
-        <Stat icon="shield" label="Unilateral attempts blocked" value={String(blockedCount)} hint="God Mode removed" accent={blockedCount ? "danger" : undefined} />
-        <Stat icon="key" label="Session key (DPoP)" value={me ? short(me.keyThumbprint, 12) : "—"} hint={isLive ? "token bound to this device" : "simulated"} mono />
-      </section>
+        {blocked && (
+          <div className="alert" role="alert">
+            <div className="alert-icon"><Icon name="lock" size={24} /></div>
+            <div className="alert-body">
+              <div className="alert-title">Unilateral attempt blocked</div>
+              <div className="alert-text">
+                You tried to {OPERATIONS[blocked.op].label.toLowerCase()} on your own. Nobody can do this alone — not even
+                the people who run the servers. Ask a second admin to co-sign.
+              </div>
+            </div>
+            <button className="btn primary" onClick={() => { setRequestOp(blocked.op); setBlocked(null); }}>
+              Request approval
+            </button>
+            <button className="icon-btn" aria-label="Dismiss" onClick={() => setBlocked(null)}>✕</button>
+          </div>
+        )}
 
-      {blocked && (
-        <div className="blocked-banner" role="alert">
-          <div className="blocked-icon"><Icon name="lock" size={26} /></div>
-          <div className="blocked-body">
-            <div className="blocked-title">{blocked.text}</div>
-            <div className="blocked-text">
-              {me?.name} tried to <b>{OPERATIONS[blocked.op].label.toLowerCase()}</b> alone. No single administrator —
-              including the person who runs the servers — can do this. Open a quorum ticket and an independent admin must
-              co-sign.
+        <section className="hero-grid">
+          {/* Wallet-style card for the protected record set */}
+          <TiltCard className={`vault ${unlocked ? "open" : ""}`}>
+            <div className="vault-top">
+              <span className="vault-badge">
+                <Icon name={unlocked ? "unlock" : "lock"} size={14} />
+                {unlocked ? "Unlocked by quorum" : "Sealed · Protected by TideCloak"}
+              </span>
+              <span className="vault-chip" aria-hidden="true" />
+            </div>
+            <div className="vault-title">Customer Ledger</div>
+            <div className="vault-sub">PII &amp; financial records · {rec?.records.length ?? 6} customers</div>
+            <div className="vault-bottom">
+              {unlocked ? (
+                <div className="vault-timer">
+                  <span className="vault-timer-num mono">{remaining(rec?.grant?.expiresAt)}</span>
+                  <span>left in access window · ticket {rec?.grant?.id}</span>
+                </div>
+              ) : (
+                <div className="vault-actions">
+                  <button className="btn light" disabled={!!busy} onClick={() => setRequestOp("UNMASK_LEDGER")}>
+                    <Icon name="ticket" size={16} /> Request access
+                  </button>
+                  <button className="btn glass" disabled={!!busy} onClick={() => tryUnilateral("UNMASK_LEDGER")}>
+                    <Icon name="bolt" size={16} /> Decrypt alone
+                  </button>
+                </div>
+              )}
+            </div>
+          </TiltCard>
+
+          <div className="side-stack">
+            <div className="panel ring-panel">
+              <QuorumRing have={focus?.signatures.length ?? 0} need={focus?.threshold ?? snap?.threshold ?? 2} granted={focus?.status === "GRANTED"} />
+              <div className="ring-text">
+                <div className="ring-label">{focus ? (focus.status === "PENDING" ? "Waiting for signatures" : focus.status === "GRANTED" ? "Quorum reached" : `Ticket ${focus.status.toLowerCase()}`) : "No active request"}</div>
+                <div className="ring-sub">{focus ? OPERATIONS[focus.op].label : "High-risk actions need two people."}</div>
+                {focus && <div className="ring-id mono">{focus.id}</div>}
+              </div>
+            </div>
+
+            <div className="panel root-panel">
+              <div className="row-head">
+                <span className="tile purple"><Icon name="key" size={16} /></span>
+                <div className="row-text">
+                  <div className="row-title">Root privileges</div>
+                  <div className="row-sub">{rootGrant ? `Active · ${remaining(rootGrant.expiresAt)} left` : "Time-boxed production access"}</div>
+                </div>
+                {rootGrant ? <span className="pill green">Active</span> : <span className="pill">Locked</span>}
+              </div>
+              {!rootGrant && (
+                <div className="row-actions">
+                  <button className="btn tinted" disabled={!!busy} onClick={() => setRequestOp("GRANT_ROOT")}>Request</button>
+                  <button className="btn plain-red" disabled={!!busy} onClick={() => tryUnilateral("GRANT_ROOT")}>Self-grant</button>
+                </div>
+              )}
             </div>
           </div>
-          <button className="btn primary" onClick={() => { setRequestOp(blocked.op); setBlocked(null); }}>
-            <Icon name="ticket" size={16} /> Open quorum ticket
-          </button>
-        </div>
-      )}
+        </section>
 
-      <main className="grid">
-        <div className="col">
-          <section className="card">
-            <div className="card-head">
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>Records</h2>
+              <div className="panel-sub">{unlocked ? "Visible to you for this access window. Every view is logged." : "Masked for everyone until two admins approve."}</div>
+            </div>
+            <span className={`pill ${unlocked ? "green" : "indigo"}`}>
+              <Icon name={unlocked ? "unlock" : "lock"} size={12} /> {unlocked ? "Unmasked" : "Masked"}
+            </span>
+          </div>
+          <div className="records">
+            {(rec?.records ?? []).map((r, i) => (
+              <div key={r.id} className={`record ${unlocked ? "reveal" : ""}`}>
+                <span className="record-avatar">{unlocked ? initials(r.name) : "••"}</span>
+                <div className="record-main">
+                  <div className="record-name"><ScrambleText text={r.name} active={unlocked} delay={i * 90} /></div>
+                  <div className="record-meta mono">{r.id} · ID <ScrambleText text={r.nationalId} active={unlocked} delay={i * 90} /> · <ScrambleText text={r.card} active={unlocked} delay={i * 90 + 60} /></div>
+                </div>
+                <div className="record-right">
+                  <div className="record-balance mono"><ScrambleText text={r.balance} active={unlocked} delay={i * 90 + 120} /></div>
+                  <span className={`risk ${r.risk.toLowerCase()}`}>{r.risk.toLowerCase()} risk</span>
+                </div>
+              </div>
+            ))}
+            {!rec && <div className="empty">Loading…</div>}
+          </div>
+          <div className="footnote">Sample data — all names and numbers are fictional.</div>
+        </section>
+
+        <section className="two-col">
+          <div className="panel">
+            <div className="panel-head">
               <div>
-                <div className="eyebrow">High-risk record set</div>
-                <h2>Customer PII &amp; Financial Ledger</h2>
+                <h2>Approvals</h2>
+                <div className="panel-sub">Requests need a second, independent signature.</div>
               </div>
-              {rec?.masked === false ? (
-                <span className="seal open"><Icon name="unlock" size={14} /> Quorum granted · {snap?.threshold}/{snap?.threshold} signatures</span>
-              ) : (
-                <span className="seal"><Icon name="lock" size={14} /> Immunity-sealed · Protected by TideCloak</span>
-              )}
+              <span className="pill">{pending.length} pending</span>
             </div>
-
-            {rec?.masked === false && rec.grant?.expiresAt && (
-              <div className="grant-note">
-                <Icon name="check" size={14} /> Unmasked under ticket <code>{rec.grant.id}</code> · access window closes at{" "}
-                {fmtTime(rec.grant.expiresAt)} · every view is written to the audit log
-              </div>
-            )}
-
-            <div className="table-wrap">
-              <table className={rec?.masked === false ? "unmasked" : ""}>
-                <thead>
-                  <tr><th>ID</th><th>Customer</th><th>National ID</th><th>Card</th><th>Balance</th><th>Risk</th></tr>
-                </thead>
-                <tbody>
-                  {(rec?.records ?? []).map((r) => (
-                    <tr key={r.id}>
-                      <td className="mono dim">{r.id}</td>
-                      <td>{r.name}</td>
-                      <td className="mono">{r.nationalId}</td>
-                      <td className="mono">{r.card}</td>
-                      <td className="mono">{r.balance}</td>
-                      <td><span className={`risk ${r.risk.toLowerCase()}`}>{r.risk}</span></td>
-                    </tr>
-                  ))}
-                  {!rec && <tr><td colSpan={6} className="dim">Loading sealed records…</td></tr>}
-                </tbody>
-              </table>
-            </div>
-            <div className="sample-note">Sample data — all names and numbers are fictional.</div>
-
-            {rec?.masked !== false && (
-              <div className="actions">
-                <button className="btn danger-ghost" disabled={!!busy} onClick={() => tryUnilateral("UNMASK_LEDGER")}>
-                  <Icon name="bolt" size={16} /> Decrypt ledger now (single admin)
-                </button>
-                <button className="btn primary" disabled={!!busy} onClick={() => setRequestOp("UNMASK_LEDGER")}>
-                  <Icon name="ticket" size={16} /> Request quorum access
-                </button>
-              </div>
-            )}
-          </section>
-
-          <section className="card">
-            <div className="card-head">
-              <div>
-                <div className="eyebrow">Privileged operation</div>
-                <h2>Elevated production privileges</h2>
-              </div>
-              {rootGrant ? (
-                <span className="seal open"><Icon name="unlock" size={14} /> Root window active</span>
-              ) : (
-                <span className="seal"><Icon name="lock" size={14} /> Quorum-gated</span>
-              )}
-            </div>
-            <p className="muted">
-              {rootGrant
-                ? `Root maintenance window granted to ${rootGrant.requester.name} until ${fmtTime(rootGrant.expiresAt!)} under ticket ${rootGrant.id}.`
-                : "Grants unrestricted production access for a time-boxed maintenance window. A compromised admin account alone cannot self-elevate."}
-            </p>
-            {!rootGrant && (
-              <div className="actions">
-                <button className="btn danger-ghost" disabled={!!busy} onClick={() => tryUnilateral("GRANT_ROOT")}>
-                  <Icon name="bolt" size={16} /> Self-grant root (single admin)
-                </button>
-                <button className="btn" disabled={!!busy} onClick={() => setRequestOp("GRANT_ROOT")}>
-                  <Icon name="ticket" size={16} /> Request with quorum
-                </button>
-              </div>
-            )}
-          </section>
-        </div>
-
-        <div className="col">
-          <section className="card">
-            <div className="card-head">
-              <div>
-                <div className="eyebrow">Multi-party approval</div>
-                <h2>Quorum queue</h2>
-              </div>
-              <span className="count-pill">{pending.length} pending</span>
-            </div>
-            {myTickets.length === 0 && (
+            {tickets.length === 0 && (
               <div className="empty">
-                <Icon name="ticket" size={22} />
-                <div>No tickets yet. High-risk actions start here.</div>
+                <span className="empty-icon"><Icon name="ticket" size={22} /></span>
+                No requests yet
               </div>
             )}
             <div className="tickets">
-              {myTickets.map((t) => (
+              {tickets.map((t) => (
                 <TicketCard
                   key={t.id}
                   t={t}
                   meSub={me?.sub}
                   busy={!!busy}
-                  onApprove={() => run("approve", () => api.approve(t.id), "Signature recorded")}
+                  onApprove={() => run("approve", () => api.approve(t.id), "Signature added")}
                   onDeny={() => run("deny", () => api.deny(t.id), "Request denied")}
                 />
               ))}
             </div>
-          </section>
+          </div>
 
-          <section className="card">
-            <div className="card-head">
+          <div className="panel">
+            <div className="panel-head">
               <div>
-                <div className="eyebrow">Tamper-evident trail</div>
-                <h2>Audit log</h2>
+                <h2>Activity</h2>
+                <div className="panel-sub">Every attempt, signature and view.</div>
               </div>
             </div>
-            <ol className="audit">
+            <ol className="timeline">
               {(snap?.audit ?? []).slice(0, 14).map((a, i) => (
-                <li key={i} className={`ev ${a.kind.toLowerCase()}`}>
-                  <span className="ev-time mono">{fmtTime(a.at)}</span>
-                  <span className={`ev-kind ${a.kind.toLowerCase()}`}>{a.kind}</span>
-                  <span className="ev-text"><b>{a.actor}</b> — {a.detail}{a.ticketId ? <> · <code>{a.ticketId}</code></> : null}</span>
+                <li key={i} className={`tl ${a.kind.toLowerCase()}`}>
+                  <span className="tl-dot" />
+                  <div className="tl-body">
+                    <div className="tl-top">
+                      <span className="tl-kind">{a.kind.toLowerCase()}</span>
+                      <span className="tl-time mono">{fmtTime(a.at)}</span>
+                    </div>
+                    <div className="tl-text"><b>{a.actor}</b> {a.detail}</div>
+                  </div>
                 </li>
               ))}
-              {snap && snap.audit.length === 0 && <li className="dim">No events yet.</li>}
+              {snap && snap.audit.length === 0 && <li className="empty">Nothing yet</li>}
             </ol>
-          </section>
-        </div>
+          </div>
+        </section>
+
+        <TrustLayers mode={api.mode} keyThumbprint={me?.keyThumbprint} />
       </main>
 
-      <TrustLayers live={isLive} />
-
       {requestOp && (
-        <div className="modal-bg" onClick={() => setRequestOp(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="eyebrow">New quorum ticket · {OPERATIONS[requestOp].risk}</div>
+        <div className="sheet-bg" onClick={() => setRequestOp(null)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="sheet-grabber" />
+            <span className={`pill ${OPERATIONS[requestOp].risk === "CRITICAL" ? "red" : "orange"}`}>{OPERATIONS[requestOp].risk.toLowerCase()} risk</span>
             <h3>{OPERATIONS[requestOp].label}</h3>
             <p className="muted">{OPERATIONS[requestOp].description}</p>
-            <label className="label" htmlFor="reason">Business justification (recorded in the ticket hash)</label>
+            <label className="field-label" htmlFor="reason">Why do you need this?</label>
             <textarea
               id="reason"
               autoFocus
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="e.g. Regulator request BNM-2026-114: verify flagged high-risk accounts"
+              placeholder="e.g. Regulator request BNM-2026-114 — verify flagged accounts"
               rows={3}
             />
-            <div className="sig-preview">
-              <Slot filled label={me?.name ?? "You"} sub="Requester · signs now" />
-              <Slot label="Independent approver" sub="different TideCloak identity" />
+            <div className="sig-row">
+              <Slot filled name={me?.name ?? "You"} sub="You · signs now" />
+              <Slot name="Second admin" sub="Different TideCloak login" />
             </div>
-            <div className="actions end">
-              <button className="btn" onClick={() => setRequestOp(null)}>Cancel</button>
+            <div className="sheet-actions">
+              <button className="btn tinted" onClick={() => setRequestOp(null)}>Cancel</button>
               <button className="btn primary" disabled={busy === "create" || reason.trim().length < 8} onClick={submitRequest}>
-                <Icon name="pen" size={16} /> Sign &amp; open ticket
+                Sign &amp; send
               </button>
             </div>
           </div>
@@ -329,48 +365,74 @@ export function QuorumConsole({ api, title, headerRight, refreshKey }: Props) {
   );
 }
 
+export function Backdrop() {
+  return (
+    <div className="backdrop" aria-hidden="true">
+      <span className="blob b1" />
+      <span className="blob b2" />
+      <span className="blob b3" />
+    </div>
+  );
+}
+
+function QuorumRing({ have, need, granted }: { have: number; need: number; granted: boolean }) {
+  const r = 34;
+  const c = 2 * Math.PI * r;
+  const pct = need ? Math.min(have / need, 1) : 0;
+  return (
+    <div className={`ring ${granted ? "done" : ""}`}>
+      <svg width="88" height="88" viewBox="0 0 88 88">
+        <circle cx="44" cy="44" r={r} className="ring-track" />
+        <circle cx="44" cy="44" r={r} className="ring-fill" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
+      </svg>
+      <div className="ring-center">
+        <span className="ring-num">{have}</span>
+        <span className="ring-of">of {need}</span>
+      </div>
+    </div>
+  );
+}
+
 function TicketCard({ t, meSub, busy, onApprove, onDeny }: { t: Ticket; meSub?: string; busy: boolean; onApprove: () => void; onDeny: () => void }) {
   const mine = t.requester.sub === meSub;
   const signed = t.signatures.some((s) => s.sub === meSub);
   const slots = Array.from({ length: t.threshold }, (_, i) => t.signatures[i]);
+  const statusLabel = t.status === "GRANTED" ? "Approved" : t.status === "PENDING" ? `${t.signatures.length} of ${t.threshold}` : t.status.toLowerCase();
   return (
     <article className={`ticket ${t.status.toLowerCase()}`}>
       <div className="ticket-top">
-        <div>
-          <div className="ticket-id mono">{t.id}</div>
-          <div className="ticket-op">{OPERATIONS[t.op].label}</div>
-        </div>
-        <span className={`status ${t.status.toLowerCase()}`}>
-          {t.status === "GRANTED" ? `QUORUM GRANTED (${t.signatures.length}/${t.threshold})` : t.status === "PENDING" ? `PENDING ${t.signatures.length}/${t.threshold}` : t.status}
+        <span className={`tile ${t.op === "UNMASK_LEDGER" ? "blue" : "purple"}`}>
+          <Icon name={t.op === "UNMASK_LEDGER" ? "lock" : "key"} size={16} />
         </span>
+        <div className="row-text">
+          <div className="row-title">{OPERATIONS[t.op].label}</div>
+          <div className="row-sub">by {t.requester.name} · {fmtTime(t.createdAt)}</div>
+        </div>
+        <span className={`pill ${t.status === "GRANTED" ? "green" : t.status === "PENDING" ? "orange" : t.status === "DENIED" ? "red" : ""}`}>{statusLabel}</span>
       </div>
       <div className="ticket-reason">“{t.reason}”</div>
-      <div className="ticket-meta mono">tx {t.hash.slice(0, 16)}…{t.hash.slice(-6)}</div>
-      <div className="sigs">
+      <div className="sig-row">
         {slots.map((s, i) =>
           s ? (
-            <Slot key={i} filled label={s.name} sub={`${s.role === "REQUESTER" ? "Requester" : "Approver"} · ${fmtTime(s.at)} · key ${short(s.keyThumbprint, 8)}`} />
+            <Slot key={i} filled name={s.name} sub={`${s.role === "REQUESTER" ? "Requested" : "Approved"} ${fmtTime(s.at)} · key ${short(s.keyThumbprint, 8)}`} />
           ) : (
-            <Slot key={i} label="Awaiting signature" sub="independent admin" />
+            <Slot key={i} name="Waiting…" sub="Independent admin" />
           )
         )}
       </div>
-      {t.status === "DENIED" && t.deniedBy && <div className="muted small">Denied by {t.deniedBy.name} at {fmtTime(t.deniedBy.at)}</div>}
+      <div className="ticket-hash mono">tx {t.hash.slice(0, 20)}…{t.hash.slice(-6)}</div>
       {t.status === "PENDING" && (
-        <div className="actions">
+        <div className="row-actions">
           {mine || signed ? (
-            <>
-              <button className="btn ghost" disabled={busy} onClick={onApprove} title="The server will refuse this — four-eyes rule">
-                <Icon name="pen" size={15} /> Try to self-approve
-              </button>
-              <span className="muted small">Waiting for an independent admin…</span>
-            </>
+            <button className="btn tinted" disabled={busy} onClick={onApprove} title="The server will refuse this — four-eyes rule">
+              Try to self-approve
+            </button>
           ) : (
             <>
               <button className="btn primary" disabled={busy} onClick={onApprove}>
-                <Icon name="pen" size={15} /> Cryptographically sign &amp; approve
+                <Icon name="pen" size={15} /> Sign &amp; approve
               </button>
-              <button className="btn danger-ghost" disabled={busy} onClick={onDeny}>Deny</button>
+              <button className="btn plain-red" disabled={busy} onClick={onDeny}>Deny</button>
             </>
           )}
         </div>
@@ -379,62 +441,55 @@ function TicketCard({ t, meSub, busy, onApprove, onDeny }: { t: Ticket; meSub?: 
   );
 }
 
-function Slot({ filled, label, sub }: { filled?: boolean; label: string; sub: string }) {
+function Slot({ filled, name, sub }: { filled?: boolean; name: string; sub: string }) {
   return (
     <div className={`slot ${filled ? "filled" : ""}`}>
-      <span className="slot-dot">{filled ? <Icon name="check" size={13} /> : null}</span>
-      <div>
-        <div className="slot-label">{label}</div>
+      <span className="slot-avatar">{filled ? <Icon name="check" size={14} /> : null}</span>
+      <div className="slot-text">
+        <div className="slot-name">{name}</div>
         <div className="slot-sub">{sub}</div>
       </div>
     </div>
   );
 }
 
-function Stat({ icon, label, value, hint, accent, mono }: { icon: string; label: string; value: string; hint: string; accent?: "warn" | "danger"; mono?: boolean }) {
+function Chip({ icon, label, tone }: { icon: string; label: React.ReactNode; tone?: "orange" | "red" }) {
   return (
-    <div className={`stat ${accent ?? ""}`}>
-      <div className="stat-icon"><Icon name={icon} size={18} /></div>
-      <div>
-        <div className="stat-label">{label}</div>
-        <div className={`stat-value ${mono ? "mono" : ""}`}>{value}</div>
-        <div className="stat-hint">{hint}</div>
-      </div>
-    </div>
+    <span className={`chip ${tone ?? ""}`}>
+      <Icon name={icon} size={14} /> {label}
+    </span>
   );
 }
 
-function TrustLayers({ live }: { live: boolean }) {
-  const layers = [
-    { t: "Threshold identity (TideCloak)", d: "Logins are verified by a decentralised network of Tide nodes. No server — not even ours or the identity provider's — holds a whole key, so nobody can mint a token for Admin 2 and approve their own request.", real: true },
-    { t: "Device-bound sessions (DPoP)", d: "Each token is bound to a key on the signer's device. A stolen token replayed from another machine is rejected by the server.", real: true },
-    { t: "Server-side quorum enforcement", d: "The ledger API verifies the token, the DPoP proof and the role, then releases plaintext only under a GRANTED ticket. The UI cannot bypass it.", real: true },
-    { t: "Governed approver roster (IGA)", d: "Who holds the quorum-approver role is controlled by TideCloak change requests. Adding a sock-puppet approver is itself a quorum-approved action.", real: true },
-    { t: "Ticket storage", d: "Tickets and the audit log are kept in server memory for this prototype and reset on restart. Production would persist them to an append-only store.", real: false },
+type Mode = "live" | "local" | "simulation";
+type Status = { label: string; tone: "green" | "orange" | "" };
+
+function TrustLayers({ mode, keyThumbprint }: { mode: Mode; keyThumbprint?: string }) {
+  const real: Status = { label: "Real", tone: "green" };
+  const needsTide: Status = { label: "Needs TideCloak", tone: "orange" };
+  const simulated: Status = { label: "Simulated", tone: "orange" };
+  const layers: { icon: string; t: string; d: string; s: Record<Mode, Status> }[] = [
+    { icon: "users", t: "Threshold identity", d: "With TideCloak, logins are signed by a decentralised Tide network. No single server holds a whole key, so nobody can fake the second admin.", s: { live: real, local: needsTide, simulation: simulated } },
+    { icon: "key", t: "Device-bound sessions", d: `Each signature is tied to the signer's own session key${keyThumbprint ? ` (yours: ${short(keyThumbprint, 12)})` : ""}. TideCloak adds DPoP so stolen tokens are useless.`, s: { live: real, local: { label: "Session key", tone: "green" }, simulation: simulated } },
+    { icon: "shield", t: "Server enforcement", d: "The server checks who you are and your role, then unmasks data only under an approved ticket. The browser can't bypass it.", s: { live: real, local: real, simulation: simulated } },
+    { icon: "check", t: "Governed approvers", d: "Only the two founding admins approve. New sign-ups wait as 'pending' and can't touch data. With TideCloak, admitting one is a quorum-approved change request.", s: { live: real, local: { label: "Partial", tone: "orange" }, simulation: simulated } },
+    { icon: "clock", t: "Tamper-evident records", d: "Tickets, signatures and the audit log are stored in a SQLite database, each ticket sealed with a SHA-256 hash.", s: { live: real, local: real, simulation: { label: "In browser", tone: "" } } },
   ];
   return (
-    <section className="card trust">
-      <div className="card-head">
+    <section className="panel">
+      <div className="panel-head">
         <div>
-          <div className="eyebrow">Why this can&apos;t be faked</div>
-          <h2>Trust layers</h2>
+          <h2>Why it can&apos;t be faked</h2>
+          <div className="panel-sub">Five layers between one admin and your customers&apos; data.</div>
         </div>
       </div>
       <div className="layers">
-        {layers.map((l, i) => (
-          <div key={i} className="layer">
-            <div className="layer-num">{i + 1}</div>
-            <div>
-              <div className="layer-title">
-                {l.t}{" "}
-                {l.real ? (
-                  <span className={`tag ${live ? "real" : "simtag"}`}>{live ? "REAL" : "REAL IN LIVE MODE"}</span>
-                ) : (
-                  <span className="tag proto">PROTOTYPE</span>
-                )}
-              </div>
-              <div className="muted small">{l.d}</div>
-            </div>
+        {layers.map((l) => (
+          <div key={l.t} className="layer">
+            <span className="tile soft"><Icon name={l.icon} size={16} /></span>
+            <div className="layer-title">{l.t}</div>
+            <div className="layer-text">{l.d}</div>
+            <span className={`pill tiny ${l.s[mode].tone}`}>{l.s[mode].label}</span>
           </div>
         ))}
       </div>

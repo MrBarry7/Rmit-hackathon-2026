@@ -12,3 +12,6 @@ scripts/.skycloak-api-key
 # Local TideCloak state (adapter export + H2 volume)
 data/tidecloak.json
 data/keycloakdb*
+
+# Local SQLite database (created at runtime)
+data/quorumgate.db*

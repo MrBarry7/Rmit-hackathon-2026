@@ -34,7 +34,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
             The live console needs a licensed TideCloak realm. Run <code>npm run init</code> (see README), then reload.
           </p>
           <p className="muted small">Detail: {error}</p>
-          <a className="btn" href="/simulation">Open the simulation instead</a>
+          <a className="btn tinted" href="/">Back to home</a>
         </div>
       </div>
     );

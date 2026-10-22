@@ -1,19 +1,16 @@
-import { withRole } from "@/lib/auth/protect";
 import { approveTicket, createTicket, denyTicket, QuorumError, snapshot } from "@/lib/quorum/engine";
-import { callerFromJwt, serverState } from "@/lib/quorum/serverStore";
+import { persist, state, withApprover } from "@/lib/quorum/serverStore";
 import type { OperationId } from "@/lib/quorum/types";
 
-// Quorum ticket API. Every call is authenticated by TideCloak (JWT + DPoP) and requires the
-// `quorum-approver` realm role. Who holds that role is itself governed by TideCloak IGA:
-// granting it to a new person creates a change request that other admins must approve, so a
-// rogue admin cannot mint a sock-puppet approver.
+// Quorum ticket API. Every call is authenticated (TideCloak JWT + DPoP, or a local session) and
+// requires the approver role. The four-eyes rule is enforced in the engine on the caller's
+// server-side identity, never on anything the browser claims.
 
-export const GET = withRole("quorum-approver", async (_req, jwt) => {
-  return Response.json({ ...snapshot(serverState), me: callerFromJwt(jwt) });
+export const GET = withApprover(async (_req, caller) => {
+  return Response.json({ ...snapshot(state()), me: caller });
 });
 
-export const POST = withRole("quorum-approver", async (req, jwt) => {
-  const caller = callerFromJwt(jwt);
+export const POST = withApprover(async (req, caller) => {
   let body: { action?: string; op?: OperationId; reason?: string; id?: string };
   try {
     body = await req.json();
@@ -21,18 +18,26 @@ export const POST = withRole("quorum-approver", async (req, jwt) => {
     return Response.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
+  const s = state();
   try {
+    let ticket;
     switch (body.action) {
       case "create":
-        return Response.json({ ticket: await createTicket(serverState, caller, body.op as OperationId, String(body.reason ?? "")) });
+        ticket = await createTicket(s, caller, body.op as OperationId, String(body.reason ?? ""));
+        break;
       case "approve":
-        return Response.json({ ticket: approveTicket(serverState, caller, String(body.id)) });
+        ticket = approveTicket(s, caller, String(body.id));
+        break;
       case "deny":
-        return Response.json({ ticket: denyTicket(serverState, caller, String(body.id)) });
+        ticket = denyTicket(s, caller, String(body.id));
+        break;
       default:
         return Response.json({ error: "Unknown action" }, { status: 400 });
     }
+    persist();
+    return Response.json({ ticket });
   } catch (err) {
+    persist(); // refused attempts are audited too
     if (err instanceof QuorumError) return Response.json({ error: err.message }, { status: err.status });
     throw err;
   }

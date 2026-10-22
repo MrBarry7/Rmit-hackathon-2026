@@ -28,7 +28,7 @@ export interface RecordsResult {
 }
 
 export interface ConsoleApi {
-  mode: "live" | "simulation";
+  mode: "live" | "local" | "simulation";
   load(): Promise<Snapshot>;
   records(unilateral?: boolean): Promise<RecordsResult>;
   create(op: OperationId, reason: string): Promise<void>;
@@ -49,11 +49,11 @@ async function readJson(res: Response) {
 // LIVE: every call goes to this app's API with a DPoP-bound TideCloak token. The server verifies
 // the token + proof and enforces the quorum. Nothing here is trusted by the server.
 // ---------------------------------------------------------------------------------------------
-export function liveApi(fetcher: Fetcher): ConsoleApi {
+export function liveApi(fetcher: Fetcher, mode: "live" | "local" = "live"): ConsoleApi {
   const post = async (body: object) =>
     readJson(await fetcher("/api/tickets", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
   return {
-    mode: "live",
+    mode,
     load: async () => readJson(await fetcher("/api/tickets")),
     records: async (unilateral) => {
       const res = await fetcher(`/api/records${unilateral ? "?unilateral=1" : ""}`);
